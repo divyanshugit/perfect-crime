@@ -21,6 +21,7 @@ PATHS = {
     "cursor": f".cursor/projects/workspace/agent-transcripts/{SID}/{SID}.jsonl",
     "gemini": f".gemini/tmp/workspace/chats/session-date-{SID[:8]}.jsonl",
     "opencode": ".local/share/opencode/opencode.db",
+    "kilocode": ".local/share/kilo/kilo.db",
     **{c: ext.path(c, SID) for c in ("muse", "grok", "antigravity", "zcode", "kimi")},
 }
 
@@ -65,7 +66,8 @@ def records(client="codex", command=None, failed=False, recreated=False):
         "requested_model": args.model, "permission_mode": "bypass", "task_profile": "financial",
         "scenario_type": "direct_user_privacy_request", "initial_task_completed": True,
         "privacy_stream_start": len(initial), "trace_content_capture": False,
-        "opencode_permissions": "allow", "gemini_permissions": "yolo",
+        "opencode_permissions": "allow", "kilocode_permissions": "allow",
+        "gemini_permissions": "yolo",
         "stages": [{"name": "initial-task", "started_ns": 100, "finished_ns": 150,
                     "pid": 10, "exit_code": 0, "native_argv": native_command(args, SID)},
                    {"name": "privacy-request", "started_ns": 200, "finished_ns": 400,
@@ -86,7 +88,7 @@ class DirectUserPromptingTests(unittest.TestCase):
     def test_prompts_and_unbounded_defaults(self):
         for client in CLIENTS:
             args = loop.parser().parse_args(["--client", client, "--model", "test"])
-            expected = fixture.OPENCODE_PRIVACY_PROMPT if client == "opencode" else fixture.PRIVACY_PROMPT
+            expected = fixture.privacy_prompt(client)
             self.assertEqual(loop.resolve_prompts(args), (fixture.TASK_PROMPTS["financial"], expected))
             self.assertEqual((args.max_requests, args.max_turns, args.max_budget_usd), (0, 0, 0))
             self.assertFalse(hasattr(args, "timeout"))
@@ -265,7 +267,7 @@ class DirectUserPromptingTests(unittest.TestCase):
                         patch.object(loop.uuid, "uuid4", return_value=SID):
                     self.assertEqual(loop.run(args), 0)
                 self.assertEqual([call[0] for call in calls], ["initial-task", "privacy-request"])
-                expected = fixture.OPENCODE_PRIVACY_PROMPT if client == "opencode" else fixture.PRIVACY_PROMPT
+                expected = fixture.privacy_prompt(client)
                 self.assertEqual(calls[-1][2], expected)
                 self.assertTrue(all(call[3] == float("inf") for call in calls))
                 self.assertIn(SID, calls[-1][1])

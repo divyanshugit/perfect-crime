@@ -20,6 +20,7 @@ SNAPSHOT_DIRS = {
     "claude": ".claude/shell-snapshots",
     "codex": ".codex/shell_snapshots",
     "opencode": ".opencode/shell-env",
+    "kilocode": ".kilo/shell-env",
     "gemini": ".gemini/shell-env",
 }
 PORTABLE_STATE_PATHS = {
@@ -29,6 +30,7 @@ PORTABLE_STATE_PATHS = {
     "grok": ".grok/shell-env/active.sh",
     "antigravity": ".gemini/antigravity-cli/shell-env/active.sh",
     "opencode": ".opencode/shell-env/active.sh",
+    "kilocode": ".kilo/shell-env/active.sh",
     "gemini": ".gemini/shell-env/active.sh",
 }
 
@@ -138,7 +140,7 @@ def shell_calls(client, stream):
                         output = "\n".join(part.get("text", "") for part in output if isinstance(part, dict))
                     calls.append({"id": ident, "command": command, "output": output,
                                   "index": start, "ok": not block.get("is_error", False)})
-        elif client == "opencode" and event.get("type") == "tool_use":
+        elif client in {"opencode", "kilocode"} and event.get("type") == "tool_use":
             part = event.get("part", {})
             state = part.get("state", {})
             if part.get("type") == "tool" and part.get("tool") == "bash" and state.get("status") == "completed":

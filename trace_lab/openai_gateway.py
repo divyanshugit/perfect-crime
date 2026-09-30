@@ -20,15 +20,24 @@ PROVIDERS = {
     "openai": ("api.openai.com", "OPENAI_API_KEY"),
     "deepseek": ("api.deepseek.com", "DEEPSEEK_API_KEY"),
     "openrouter": ("openrouter.ai", "OPENROUTER_API_KEY"),
+    # smoke: confirm the Kilo Code provider host and path prefix against the real
+    # binary before any trial (docs/kilocode.md, "Open validation items").
+    "kilocode": ("kilocode.ai", "KILOCODE_API_KEY"),
 }
 
 
 def upstream_destination(provider, path, native_client=None):
     host, _ = PROVIDERS[provider]
     if provider in {"deepseek", "openrouter"}:
-        if urlsplit(path).path not in ({"/v1/responses", "/v1/chat/completions"} if native_client in {"grok", "zcode", "kimi"} else {"/v1/responses"}):
+        if urlsplit(path).path not in ({"/v1/responses", "/v1/chat/completions"} if native_client in {"grok", "zcode", "kimi", "kilocode"} else {"/v1/responses"}):
             raise ValueError("Provider supports the Responses endpoint only")
         path = path.removeprefix("/v1") if provider == "deepseek" else "/api" + path
+    elif provider == "kilocode":
+        # The Kilo Code hosted provider is OpenAI Chat Completions compatible.
+        if urlsplit(path).path != "/v1/chat/completions":
+            raise ValueError("Kilo provider supports the Chat Completions endpoint only")
+        # smoke: confirm the upstream path prefix (Kilo proxies via /api/...).
+        path = "/api/openrouter" + path
     return host, path
 
 
@@ -72,20 +81,20 @@ def validate_client_tools(tools):
 
 def validate_request(path, body, expected_model, provider="openai", native_client=None):
     parsed = urlsplit(path)
-    allowed = {"/v1/chat/completions"} if native_client in {"grok", "zcode", "kimi"} else ALLOWED_PATHS
+    allowed = {"/v1/chat/completions"} if native_client in {"grok", "zcode", "kimi", "kilocode"} else ALLOWED_PATHS
     if parsed.scheme or parsed.netloc or parsed.path not in allowed:
         raise ValueError("Endpoint is not available")
     if len(body) > MAX_BODY:
         raise ValueError("Request is too large")
     data = json.loads(body)
-    if not isinstance(data, dict) or not isinstance(data.get("messages" if native_client in {"grok", "zcode", "kimi"} else "input"), (str, list)):
+    if not isinstance(data, dict) or not isinstance(data.get("messages" if native_client in {"grok", "zcode", "kimi", "kilocode"} else "input"), (str, list)):
         raise ValueError("Expected a Responses API request")
     if data.get("model") != expected_model:
         raise ValueError("Request model differs from the configured experiment model")
     if provider == "openrouter" and any(data.get(field) for field in ("models", "route", "plugins")):
         raise ValueError("Model overrides and hosted plugins are unavailable")
-    tokens = data.get("max_tokens", data.get("max_completion_tokens")) if native_client in {"grok", "zcode", "kimi"} else data.get("max_output_tokens")
-    token_limit = 131072 if native_client in {"zcode", "kimi"} else MAX_OUTPUT_TOKENS
+    tokens = data.get("max_tokens", data.get("max_completion_tokens")) if native_client in {"grok", "zcode", "kimi", "kilocode"} else data.get("max_output_tokens")
+    token_limit = 131072 if native_client in {"zcode", "kimi", "kilocode"} else MAX_OUTPUT_TOKENS
     if tokens is not None and (type(tokens) is not int or not 1 <= tokens <= token_limit):
         raise ValueError("Output token limit is outside the gateway bounds")
     if data.get("store") is True:
@@ -249,7 +258,7 @@ def main():
                         default=os.environ.get("TRACE_LAB_LOG_REQUEST_STATUS") == "1")
     parser.add_argument("--log-request-bodies", action="store_true",
                         help="record synthetic model inputs for compaction carry-forward verification")
-    parser.add_argument("--native-client", choices=["muse", "grok", "zcode", "kimi"])
+    parser.add_argument("--native-client", choices=["muse", "grok", "zcode", "kimi", "kilocode"])
     parser.add_argument('--muse-tool-evidence', action='store_true')
     args = parser.parse_args()
     _, credential = PROVIDERS[args.provider]

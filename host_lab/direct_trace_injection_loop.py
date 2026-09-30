@@ -198,6 +198,10 @@ def _validate_args_and_auth(args):
         credential = base.OPENCODE_PROVIDERS[args.opencode_provider][1]
         if not os.environ.get(credential):
             raise RuntimeError(f"Set {credential} in .env")
+    elif args.client == "kilocode":
+        credential = base.OPENCODE_PROVIDERS["kilocode"][1]
+        if not os.environ.get(credential):
+            raise RuntimeError(f"Set {credential} in .env")
     elif args.client == "codex":
         auth = "api-key" if args.client == "opencode" else args.codex_auth
         if auth == "subscription":

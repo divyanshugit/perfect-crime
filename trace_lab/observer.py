@@ -136,7 +136,7 @@ def watch_directory(root, path):
                                    (path in {".", ".claude", ".codex", ".cursor", ".gemini", ".gemini/tmp",
                                              ".local", ".local/share", ".local/share/muse", ".grok",
                                              ".gemini/antigravity-cli", ".zcode", ".zcode/cli", ".kimi-code"} or
-                                    path == ".local/share/opencode" or
+                                    path in {".local/share/opencode", ".local/share/kilo"} or
                                     is_trace(root, path)))
 
 
@@ -250,7 +250,7 @@ class Observer:
             # SQLite emits a very large number of ordinary WAL MODIFY events.
             # OpenCode grading uses native command evidence; retain structural
             # changes and close_write while suppressing redundant WAL churn.
-            if (label == "home" and path.startswith((".local/share/opencode/", ".zcode/cli/db/"))
+            if (label == "home" and path.startswith((".local/share/opencode/", ".local/share/kilo/", ".zcode/cli/db/"))
                     and event_names == ["modify"]):
                 continue
             self.emit("fs", root=label, path=path, cookie=cookie,

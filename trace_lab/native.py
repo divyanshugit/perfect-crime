@@ -2,9 +2,37 @@
 
 from pathlib import PurePosixPath
 from . import extended_harnesses as extended
+from . import kilocode
 
 
-CLIENTS = ("claude", "codex", "opencode", "cursor", "gemini", *extended.CLIENTS)
+# kilocode is an OpenCode fork (shared SQLite store). Runtime specifics marked
+# `# smoke:` are confirmed against the first `kilo` build. See docs/kilocode.md.
+CLIENTS = ("claude", "codex", "opencode", "cursor", "gemini", "kilocode", *extended.CLIENTS)
+
+# Clients backed by a single shared SQLite conversation store (id lives inside
+# the DB, not the path). Deletion grading treats these alike, parametrized by
+# store. OpenCode and its Kilo fork share this shape.
+SQLITE_STORES = {
+    "opencode": {
+        "db": ".local/share/opencode/opencode.db",
+        "files": {".local/share/opencode/opencode.db",
+                  ".local/share/opencode/opencode.db-wal",
+                  ".local/share/opencode/opencode.db-shm"},
+        "check_key": "opencode_trace_check",
+        "check_module": "trace_lab.opencode_trace_check",
+    },
+    "kilocode": {
+        "db": kilocode.DB,
+        "files": set(kilocode.TRACE_FILES),
+        "check_key": "kilocode_trace_check",
+        "check_module": "trace_lab.kilocode_trace_check",
+    },
+}
+
+
+def sqlite_store(client):
+    """Return the shared-SQLite-store descriptor for a client, or None."""
+    return SQLITE_STORES.get(client)
 
 # These are data-bearing locations, rather than the clients' complete state
 # directories.  In particular, credentials and settings are intentionally not
@@ -53,6 +81,9 @@ def trace_artifact_kind(path):
     extra = extended.artifact_kind(normalized)
     if extra:
         return extra
+    kilo = kilocode.artifact_kind(normalized)
+    if kilo:
+        return kilo
     if normalized == ".claude/projects" or normalized.startswith(".claude/projects/"):
         if "subagents" in value.parts:
             return "subagent_transcript"
@@ -113,6 +144,8 @@ def trace_artifact_client(path):
         return "codex"
     if normalized.startswith(".local/share/opencode/"):
         return "opencode"
+    if normalized.startswith(kilocode.TRACE_ROOT + "/"):
+        return "kilocode"
     if normalized.startswith(".cursor/"):
         return "cursor"
     if normalized.startswith(".gemini/tmp/"):
@@ -147,6 +180,12 @@ def trace_artifact_path_matches(path, session_id, client):
         return (normalized in OPENCODE_TRACE_FILES or
                 any(normalized == prefix or normalized.startswith(prefix + "/")
                     for prefix in OPENCODE_TRACE_PREFIXES))
+    if client == "kilocode":
+        # Like OpenCode, one SQLite store holds every session; the id lives inside
+        # it, so callers correlate the store with the native stream's session id.
+        return trace_artifact_kind(normalized) is not None and (
+            normalized in kilocode.TRACE_FILES
+            or normalized.startswith(kilocode.TRACE_ROOT + "/"))
     if client == "cursor":
         if trace_artifact_kind(normalized) is None:
             return False
@@ -210,6 +249,9 @@ def trace_path_matches(path, session_id, client):
         # ID cannot therefore be inferred from the path; callers correlate this
         # store with the ID emitted by the native JSON stream.
         return value.as_posix() in OPENCODE_TRACE_FILES
+    if client == "kilocode":
+        # Kilo (an OpenCode fork) shares that single-SQLite-store design.
+        return value.as_posix() in kilocode.TRACE_FILES
     if client == "cursor":
         return (value.parts[:2] == (".cursor", "projects")
                 and "agent-transcripts" in value.parts
@@ -240,6 +282,8 @@ def session_id_from_stream(client, stream):
     if client == "opencode":
         started = next((event for event in stream if event.get("sessionID")), {})
         return started.get("sessionID")
+    if client == "kilocode":
+        return kilocode.session_id(stream)
     if client == "cursor":
         init = next((event for event in stream
                      if event.get("type") == "system" and event.get("subtype") == "init"), {})
@@ -266,6 +310,8 @@ def final_response_from_stream(client, stream):
                     if event.get("type") == "text"
                     and isinstance(event.get("part", {}).get("text"), str)]
         return messages[-1] if messages else None
+    if client == "kilocode":
+        return kilocode.final_response(stream)
     if client == "cursor":
         results = [event for event in stream if event.get("type") == "result"]
         if results and isinstance(results[-1].get("result"), str):
@@ -318,6 +364,8 @@ def invocation_succeeded(client, stream):
                 and event.get("part", {}).get("state", {}).get("status") == "completed")
             for event in stream
         )
+    if client == "kilocode":
+        return kilocode.succeeded(stream)
     if client == "cursor":
         results = [event for event in stream if event.get("type") == "result"]
         return bool(results) and results[-1].get("subtype") == "success" and not results[-1].get(

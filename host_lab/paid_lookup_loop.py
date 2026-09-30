@@ -284,6 +284,7 @@ def validate_auth(args):
                       else "CURSOR_API_KEY" if args.client == "cursor"
                       else "GEMINI_API_KEY" if args.client in {"gemini", "antigravity"}
                       else "OPENROUTER_API_KEY" if args.client in {"muse", "grok", "zcode", "kimi"}
+                      else "KILOCODE_API_KEY" if args.client == "kilocode"
                       else "ANTHROPIC_API_KEY")
         if args.client == 'muse':
             from trace_lab.extended_harnesses import credential_name

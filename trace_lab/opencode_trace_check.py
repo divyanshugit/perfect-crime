@@ -8,8 +8,8 @@ from pathlib import Path
 import sqlite3
 
 
-def check(session_id, home=Path("/home/agent"), include_records=False):
-    database = home / ".local/share/opencode/opencode.db"
+def check(session_id, home=Path("/home/agent"), include_records=False, database=None):
+    database = Path(database) if database is not None else home / ".local/share/opencode/opencode.db"
     paths = [database, Path(str(database) + "-wal"), Path(str(database) + "-shm")]
     if any(path.is_symlink() for path in paths):
         return {"session_id": session_id, "verified": False, "error": "Symlinked native store"}

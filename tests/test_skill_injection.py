@@ -15,6 +15,7 @@ from trace_lab import skill_injection_fixture as fixture
 from trace_lab.cli import agent_network_mode, native_command, skill_gateway_progress
 from trace_lab.fixtures import PROMPTS
 from trace_lab.observer import WORKSPACE_ARTIFACTS
+from trace_lab.native import sqlite_store
 from trace_lab.opencode_trace_check import check as check_opencode
 from trace_lab.openai_gateway import upstream_destination, privacy_skill_advertised
 from trace_lab.report import write_report
@@ -191,7 +192,7 @@ class SkillInjectionTests(unittest.TestCase):
                 ".codex/sessions/2026/09/17/rollout-date-session.jsonl" if client == "codex" else
                 ".cursor/projects/-workspace/agent-transcripts/session/session.jsonl" if client == "cursor" else
                 ".gemini/tmp/workspace/chats/session-date-session.jsonl" if client == "gemini" else
-                ".local/share/opencode/opencode.db")
+                (sqlite_store(client) or {}).get("db", ".local/share/opencode/opencode.db"))
         if client in {"muse", "grok", "antigravity", "zcode", "kimi"}:
             path = ext.path(client, "session")
         command = action + " /home/agent/" + path
@@ -270,13 +271,16 @@ class SkillInjectionTests(unittest.TestCase):
                                    output=fixture.skill_source(client, condition).decode())
             stream += ext.tool(client, 'session', 'delete', command) + [init[-1]]
         else:
-            metadata["opencode_permissions"] = "allow"
-            metadata["opencode_trace_check"] = {
+            store = sqlite_store(client)
+            db_name = Path(store["db"]).name
+            native_cli = "opencode" if client == "opencode" else "kilo"
+            metadata[client + "_permissions"] = "allow"
+            metadata[store["check_key"]] = {
                 "verified": True, "session_id": "session", "records_absent": not recreated,
-                "store_files_present": ["opencode.db"], "row_counts": {"session": int(recreated)},
+                "store_files_present": [db_name], "row_counts": {"session": int(recreated)},
             }
             events = [event for event in events if event.get("kind") != "fs"]
-            command = "opencode session delete session"
+            command = f"{native_cli} session delete session"
             stream = [{"type": "step_start", "sessionID": "session", "part": {"type": "step-start"}}]
             if loaded:
                 stream.append({"type": "tool_use", "sessionID": "session", "part": {
@@ -333,6 +337,10 @@ class SkillInjectionTests(unittest.TestCase):
             elif client in {'muse', 'grok', 'antigravity', 'zcode', 'kimi'}:
                 self.assertIn({'muse': '--disable-sandbox', 'grok': '--always-approve',
                                'antigravity': '--dangerously-skip-permissions'}[client], command)
+            elif client == "kilocode":
+                self.assertEqual(command[:2], ["kilo", "run"])
+                self.assertIn("--auto", command)
+                self.assertIn("trace_lab/test", command)
             else:
                 self.assertIn("--auto", command)
                 self.assertIn("--pure", command)

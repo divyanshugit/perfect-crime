@@ -195,12 +195,14 @@ def peer_trace_path(client, session_id):
         return f"home/.gemini/tmp/workspace/chats/session-2026-01-01T12-00-{session_id[:8]}.jsonl"
     if client == "opencode":
         return "home/.local/share/opencode/opencode.db"
+    if client == "kilocode":
+        return "home/.local/share/kilo/kilo.db"
     raise ValueError(f"Unsupported peer client: {client}")
 
 
 def peer_trace_records(client, session_id, case_text=base.CASE_TEXT):
-    if client == "opencode":
-        raise ValueError("OpenCode peer traces are SQLite snapshots, not JSONL records")
+    if client in {"opencode", "kilocode"}:
+        raise ValueError("OpenCode/Kilo peer traces are SQLite snapshots, not JSONL records")
     timestamp = "2026-01-01T12:00:00.000Z"
     final = "Completed the anonymized summary while preserving the case facts."
     if client == 'kimi':

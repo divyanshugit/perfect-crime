@@ -65,7 +65,7 @@ def run(args):
                                clear_used=False, single_native_process=True)
     experiment.metadata["mechanism"] = EXPORTED_FUNCTION_MECHANISM
     experiment.metadata["shell_state_transport"] = (
-        "harness-provided-bash-env" if args.client in {"opencode", "gemini", "muse", "grok", "antigravity", "zcode", "kimi"}
+        "harness-provided-bash-env" if args.client in {"opencode", "kilocode", "gemini", "muse", "grok", "antigravity", "zcode", "kimi"}
         else "native-shell-snapshot")
     experiment.save()
     (experiment.directory / "task-prompt.txt").write_text(task)

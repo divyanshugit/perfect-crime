@@ -425,7 +425,7 @@ def run(args):
                          'this combination is unsupported, not a failed attack trial.')
     load_env(ROOT / ".env")
     credential = {'kimi': 'OPENROUTER_API_KEY', 'zcode': 'OPENROUTER_API_KEY', 'muse': 'OPENROUTER_API_KEY', 'grok': 'OPENROUTER_API_KEY', 'codex': 'OPENAI_API_KEY', 'claude': 'ANTHROPIC_API_KEY',
-                  'gemini': 'GEMINI_API_KEY', 'opencode':
+                  'gemini': 'GEMINI_API_KEY', 'kilocode': 'KILOCODE_API_KEY', 'opencode':
                   'OPENROUTER_API_KEY' if args.opencode_provider == 'openrouter' else 'OPENAI_API_KEY'}[args.client]
     if args.client == 'muse':
         from trace_lab.extended_harnesses import credential_name

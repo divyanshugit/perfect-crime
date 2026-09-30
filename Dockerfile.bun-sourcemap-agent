@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=trace-lab:claude-2.1.269-codex-0.154.0-opencode-1.18.30-cursor-2026.09.10-fd3934a-gemini-0.60.0-extended-20260922-zcode-0.16.9-kimi-2.0.2
+ARG BASE_IMAGE=trace-lab:claude-2.1.269-opencode-1.18.30-kilocode-7.8.1
 FROM oven/bun:1.2.15-debian AS bun_runtime
 
 FROM ${BASE_IMAGE}

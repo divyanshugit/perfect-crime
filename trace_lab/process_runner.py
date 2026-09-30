@@ -15,7 +15,7 @@ import time
 
 def main():
     command = sys.argv[1:]
-    native = bool(command) and command[0] in {"claude", "codex", "opencode", "cursor-agent", "gemini", "muse", "grok", "agy", "zcode", "kimi"}
+    native = bool(command) and command[0] in {"claude", "codex", "opencode", "cursor-agent", "gemini", "muse", "grok", "agy", "zcode", "kimi", "kilo"}
     two_turn_driver = command[:3] == ["python3", "-m", "trace_lab.claude_two_turn"]
     muse_driver = command[:3] == ['python3', '-m', 'trace_lab.muse_driver']
     kimi_driver = command[:3] == ['python3', '-m', 'trace_lab.kimi_driver']
@@ -29,7 +29,10 @@ def main():
 
     # The bounded prompt is supplied by the host, with EOF, just as for normal -p.
     prompt = sys.stdin.buffer.read(1024 * 1024)
-    if command[0] in {'grok', 'agy', 'zcode', 'kimi'} or command[:2] == ['muse', 'exec']:
+    if command[0] in {'grok', 'agy', 'zcode', 'kimi', 'kilo'} or command[:2] == ['muse', 'exec']:
+        # `kilo run <message>` and `muse exec <prompt>` take the prompt as a
+        # positional; grok/agy/zcode/kimi take it after -p. (-p is --password in
+        # `kilo attach`, so it must not be added for kilo.)
         command = [*command, *(['-p'] if command[0] in {'grok', 'agy', 'zcode', 'kimi'} else []), prompt.decode('utf-8')]
         prompt = b''
     child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

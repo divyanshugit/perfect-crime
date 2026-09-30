@@ -227,7 +227,7 @@ def export_native_trace(directory, session_id, client="claude", record_predicate
 def model_evidence(stream, metadata=None):
     """Startup configuration is not sufficient when the native CLI switches models."""
     metadata = metadata or {}
-    if metadata.get("client", "claude") in {"codex", "opencode", "gemini", "muse", "grok", "antigravity", "zcode", "kimi"}:
+    if metadata.get("client", "claude") in {"codex", "opencode", "kilocode", "gemini", "muse", "grok", "antigravity", "zcode", "kimi"}:
         client = metadata.get("client", "codex")
         models = ([metadata["requested_model"]]
                   if (metadata.get("model_enforced_by_gateway") and

@@ -33,10 +33,10 @@ from . import (booking_scenario, crack_7z_scenario, dataset_scenario,
                trace_canary_fixture, payment_lookup_fixture, optional_payment_lookup_fixture)
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_IMAGE = (
-    "trace-lab:claude-2.1.269-codex-0.154.0-opencode-1.18.30-"
-    "cursor-2026.09.10-fd3934a-gemini-0.60.0-extended-20260922-zcode-0.16.9-kimi-2.0.2"
-)
+# Slimmed image: only claude, opencode and kilocode are built for now (the other
+# agents are commented out in the Dockerfile). Restore their tokens here when the
+# full image is rebuilt.
+DEFAULT_IMAGE = "trace-lab:claude-2.1.269-opencode-1.18.30-kilocode-7.8.1"
 MAX_ARTIFACT_BYTES = 128 * 1024 * 1024
 LABEL = "org.trace-lab.run"
 CODEX_AUTH_MODES = ("api-key", "subscription")
@@ -189,6 +189,25 @@ def native_command(args, session_id, resume=False):
         if reasoning_effort:
             command.extend(["--variant", reasoning_effort])
         return command
+    if client == "kilocode":
+        # Kilo is an OpenCode fork; the provider is configured in kilo.json.
+        # Flags confirmed against @kilocode/cli 7.8.1 (`kilo run --help`).
+        command = [
+            "kilo", "run", "--format", "json",
+            "--model", f"trace_lab/{args.model}",
+            "--dir", agent_workspace(args.condition),
+        ]
+        if resume:
+            if not session_id:
+                raise ValueError("A Kilo session ID is required for resume")
+            # --auto cannot combine with continuation; kilo.json permission
+            # config auto-approves resumed turns instead.
+            command.extend(["--session", session_id])
+        else:
+            command.append("--auto")
+        if reasoning_effort:
+            raise ValueError("Kilo reasoning-effort override is not validated; omit it")
+        return command
     if client == "cursor":
         model = args.model
         if reasoning_effort and "[" not in model:
@@ -267,7 +286,7 @@ class Experiment:
                 }
                 and getattr(args, "client", "claude") not in {"opencode", "cursor"}
             ),
-            "model_enforced_by_gateway": getattr(args, "client", "claude") in {"codex", "opencode", "gemini", *extended.CLIENTS},
+            "model_enforced_by_gateway": getattr(args, "client", "claude") in {"codex", "opencode", "gemini", "kilocode", *extended.CLIENTS},
             "reasoning_effort": getattr(args, "reasoning_effort", None),
             "artifacts": str(self.directory), "resources": {"containers": [], "volumes": []},
         }
@@ -452,6 +471,17 @@ class Experiment:
             if code != "0":
                 raise RuntimeError(f"{config_client.title()} configuration initialization failed: " +
                                    docker("logs", cursor_initializer).stdout)
+        if self.metadata["client"] == "kilocode":
+            kilo_initializer = self.start_container(
+                "kilocode-config-init", "--network", "none",
+                "--mount", mount(home, "/home/agent"),
+                command=("python3", "-m", "trace_lab.kilocode_config",
+                         "--model", self.args.model),
+                caps=("CHOWN", "DAC_OVERRIDE"), user="0:0",
+            )
+            if docker("wait", kilo_initializer).stdout.strip() != "0":
+                raise RuntimeError("Kilo configuration initialization failed: " +
+                                   docker("logs", kilo_initializer).stdout)
         self.metadata['observer_trace_snapshots'] = observer_trace_contents(
             self.metadata['client'], self.args.condition, self.metadata['trace_content_capture'])
         observer_options = (("--skip-trace-snapshots",)
@@ -485,6 +515,15 @@ class Experiment:
                     gateway_args += ('--log-request-bodies',)
                 if self.metadata['client'] == 'muse' and self.metadata.get('permissions_profile') == 'auto':
                     gateway_args += ('--muse-tool-evidence',)
+            elif self.metadata['client'] == 'kilocode':
+                # Own Kilo Code provider: the gateway holds the real key and forces
+                # the model; the agent only sees a loopback endpoint + placeholder.
+                gateway_module, credential = 'trace_lab.openai_gateway', OPENCODE_PROVIDERS['kilocode'][1]
+                gateway_args = ('--max-requests', str(self.args.max_requests),
+                                '--expected-model', self.args.model, '--provider', 'kilocode',
+                                '--native-client', 'kilocode', '--log-request-status')
+                if self.args.condition in compaction_skill_fixture.CONDITIONS:
+                    gateway_args += ('--log-request-bodies',)
             elif self.metadata["client"] == "cursor":
                 gateway_module, credential = "trace_lab.cursor_gateway", "CURSOR_API_KEY"
                 gateway_args = ("--max-requests", str(self.args.max_requests))
@@ -544,6 +583,20 @@ class Experiment:
                                  '--env', 'OPENROUTER_API_KEY=trace-lab-placeholder',
                                  '--env', 'GROK_AGENT_DASHBOARD=0',
                                  '--env', 'NO_PROXY=127.0.0.1,localhost']
+        elif self.metadata['client'] == 'kilocode':
+            # The provider config in ~/.config/kilo/kilo.json (written by the
+            # config-init step) points Kilo at the loopback gateway with a
+            # placeholder key. smoke: confirm KILO_DISABLE_AUTOUPDATE env name.
+            agent_environment = ['--env', 'SHELL=/bin/bash',
+                                 '--env', 'KILOCODE_API_KEY=trace-lab-placeholder',
+                                 '--env', 'KILO_DISABLE_AUTOUPDATE=1',
+                                 '--env', 'NO_PROXY=127.0.0.1,localhost']
+            self.metadata['kilocode_permissions'] = 'allow'
+            if self.args.condition == shell_tampering_fixture.CONDITION:
+                agent_environment.extend([
+                    '--env', 'BASH_ENV=/home/agent/' +
+                    shell_tampering_fixture.PORTABLE_STATE_PATHS['kilocode']])
+                self.metadata['shell_state_transport'] = 'harness-provided-bash-env'
         elif self.metadata["client"] == "cursor":
             agent_environment = [
                 "--env", "CURSOR_API_KEY=cursor-trace-lab-placeholder",
@@ -1156,6 +1209,10 @@ def execute(args):
             raise RuntimeError(
                 "Set CURSOR_API_KEY in the repository .env or host environment for the gateway."
             )
+    elif args.command == "run" and getattr(args, "client", "claude") == "kilocode":
+        credential = OPENCODE_PROVIDERS["kilocode"][1]
+        if not os.environ.get(credential):
+            raise RuntimeError(f"Set {credential} in the repository .env or host environment for the gateway.")
     elif args.command == "run" and getattr(args, "client", "claude") in {"codex", "opencode"}:
         if args.client == "opencode" and args.codex_auth != "api-key":
             raise RuntimeError("OpenCode currently supports --codex-auth api-key only")
