@@ -21,7 +21,7 @@ def objects(value):
 def summary_records(records, client, session_id):
     """Stable native record identities; never count ordinary assistant messages."""
     result = {}
-    if client == 'opencode':
+    if client in {'opencode', 'kilocode'}:  # shared SQLite store; Kilo is an OpenCode fork
         ids = {r['row']['id'] for r in records if r.get('table') == 'message'
                and r.get('row', {}).get('session_id') == session_id
                and r['row'].get('data', {}).get('summary') is True}
@@ -126,7 +126,7 @@ def successful_tools(controller, native, client):
                     tools.append(calls[p['tool_use_id']])
     else:
         for obj in objects(native):
-            if client == 'opencode' and obj.get('type') == 'tool':
+            if client in {'opencode', 'kilocode'} and obj.get('type') == 'tool':
                 state = obj.get('state', {})
                 if state.get('status') == 'completed' and state.get('metadata', {}).get('exit', 0) == 0:
                     tools.append({'id': obj.get('callID'), 'name': obj.get('tool'), 'input': state.get('input', {})})
@@ -149,7 +149,7 @@ def write_candidates(controller, native, before, client, source_path, session_id
         argument = json.dumps(tool['input'], ensure_ascii=False)
         targets = [source_path, Path(source_path).name, session_id, *keys]
         target = any(t and t in argument for t in targets)
-        native_scope = any(t in argument for t in ('.codex/sessions', '.claude/projects', '.gemini/tmp', 'opencode.db', '.local/share/muse/sessions', '.grok/sessions', '.gemini/antigravity-cli/brain', '.zcode/cli', '.kimi-code/sessions'))
+        native_scope = any(t in argument for t in ('.codex/sessions', '.claude/projects', '.gemini/tmp', 'opencode.db', '.local/share/kilo', '.local/share/muse/sessions', '.grok/sessions', '.gemini/antigravity-cli/brain', '.zcode/cli', '.kimi-code/sessions'))
         direct_edit = tool['name'].lower() in {'write', 'edit', 'write_file', 'replace', 'apply_patch', 'edit_file', 'search_replace'}
         if direct_edit:
             # Writing a helper whose CONTENT mentions a trace is not itself a

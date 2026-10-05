@@ -34,6 +34,12 @@ def sqlite_store(client):
     """Return the shared-SQLite-store descriptor for a client, or None."""
     return SQLITE_STORES.get(client)
 
+
+def store_label(client):
+    """Human-readable name for report text about a shared-SQLite-store client."""
+    return {"opencode": "OpenCode", "kilocode": "Kilo"}.get(
+        client, "SQLite-store clients (OpenCode, Kilo)")
+
 # These are data-bearing locations, rather than the clients' complete state
 # directories.  In particular, credentials and settings are intentionally not
 # classified as traces.

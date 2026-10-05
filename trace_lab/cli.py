@@ -1,6 +1,7 @@
 """Host controller. All subprocesses use argument arrays, never a shell."""
 
 from . import extended_harnesses as extended
+from . import kilocode
 
 import argparse
 import base64
@@ -18,7 +19,7 @@ import time
 import uuid
 
 from .fixtures import PRIME_CONDITIONS, PROMPTS, cleanup_prompt
-from .native import (CLIENTS, invocation_succeeded, session_id_from_stream,
+from .native import (CLIENTS, invocation_succeeded, session_id_from_stream, sqlite_store,
                      stderr_artifact, stream_artifact)
 from .env import load_env
 from .openai_gateway import PROVIDERS as OPENCODE_PROVIDERS
@@ -61,7 +62,7 @@ def observer_trace_contents(client, condition, capture):
     # Optimization captures OpenCode's native rows independently before and
     # after continuation. Repeated binary WAL snapshots are not logical history
     # and can exhaust the recorder on long schema-discovery attempts.
-    return capture and not (client == 'opencode'
+    return capture and not (client in {'opencode', 'kilocode'}
                             and condition == compaction_skill_fixture.OPTIMIZATION_CONDITION)
 
 
@@ -126,8 +127,8 @@ def native_command(args, session_id, resume=False):
     client = getattr(args, "client", "claude")
     reasoning_effort = getattr(args, "reasoning_effort", None)
     permissions = getattr(args, 'permissions', 'full')
-    if permissions == 'auto' and client not in {*extended.CLIENTS, 'opencode'}:
-        raise ValueError('This checkout implements --permissions auto only for Muse, Grok, Antigravity, and OpenCode; other clients use the preserved auto batch source.')
+    if permissions == 'auto' and client not in {*extended.CLIENTS, 'opencode', 'kilocode'}:
+        raise ValueError('This checkout implements --permissions auto only for Muse, Grok, Antigravity, OpenCode, and Kilo; other clients use the preserved auto batch source.')
     if client in extended.CLIENTS:
         return extended.native_command(client, args.model, agent_workspace(args.condition),
                                        session_id, resume, reasoning_effort, permissions)
@@ -190,24 +191,10 @@ def native_command(args, session_id, resume=False):
             command.extend(["--variant", reasoning_effort])
         return command
     if client == "kilocode":
-        # Kilo is an OpenCode fork; the provider is configured in kilo.json.
-        # Flags confirmed against @kilocode/cli 7.8.1 (`kilo run --help`).
-        command = [
-            "kilo", "run", "--format", "json",
-            "--model", f"trace_lab/{args.model}",
-            "--dir", agent_workspace(args.condition),
-        ]
-        if resume:
-            if not session_id:
-                raise ValueError("A Kilo session ID is required for resume")
-            # --auto cannot combine with continuation; kilo.json permission
-            # config auto-approves resumed turns instead.
-            command.extend(["--session", session_id])
-        else:
-            command.append("--auto")
-        if reasoning_effort:
-            raise ValueError("Kilo reasoning-effort override is not validated; omit it")
-        return command
+        # One implementation of the invocation (see trace_lab/kilocode.py); the model
+        # is addressed through the loopback provider the config-init step writes.
+        return kilocode.native_command(f"trace_lab/{args.model}", agent_workspace(args.condition),
+                                       session_id, resume, reasoning_effort, permissions)
     if client == "cursor":
         model = args.model
         if reasoning_effort and "[" not in model:
@@ -476,7 +463,8 @@ class Experiment:
                 "kilocode-config-init", "--network", "none",
                 "--mount", mount(home, "/home/agent"),
                 command=("python3", "-m", "trace_lab.kilocode_config",
-                         "--model", self.args.model),
+                         "--model", self.args.model,
+                         "--permissions", self.metadata["permissions_profile"]),
                 caps=("CHOWN", "DAC_OVERRIDE"), user="0:0",
             )
             if docker("wait", kilo_initializer).stdout.strip() != "0":
@@ -486,7 +474,7 @@ class Experiment:
             self.metadata['client'], self.args.condition, self.metadata['trace_content_capture'])
         observer_options = (("--skip-trace-snapshots",)
                             if not self.metadata['observer_trace_snapshots'] else ())
-        if self.args.condition == compaction_skill_fixture.OPTIMIZATION_CONDITION and self.metadata['client'] == 'opencode':
+        if self.args.condition == compaction_skill_fixture.OPTIMIZATION_CONDITION and self.metadata['client'] in {'opencode', 'kilocode'}:
             self.metadata['native_store_content_capture'] = 'independent_transaction_consistent_pre_post_rows'
         self.observer = self.start_container(
             "observer", "--network", "none",
@@ -554,6 +542,10 @@ class Experiment:
             gateway_environment = ("--env", credential) if credential else ()
             if self.metadata["client"] == "opencode":
                 gateway_environment += ("--env", "TRACE_LAB_LOG_REQUEST_STATUS=1")
+            if self.metadata["client"] == "kilocode":
+                # Pass the org id through to the gateway; it is sent in the
+                # X-KiloCode-OrganizationId header to scope the Kilo request.
+                gateway_environment += ("--env", "KILOCODE_ORG_ID")
             gateway = self.start_container(
                 "gateway", "--network", "bridge", *gateway_environment,
                 "--mount", mount(relay, "/relay"),
@@ -591,7 +583,22 @@ class Experiment:
                                  '--env', 'KILOCODE_API_KEY=trace-lab-placeholder',
                                  '--env', 'KILO_DISABLE_AUTOUPDATE=1',
                                  '--env', 'NO_PROXY=127.0.0.1,localhost']
-            self.metadata['kilocode_permissions'] = 'allow'
+            self.metadata['kilocode_permissions'] = (
+                'native-defaults' if self.metadata['permissions_profile'] == 'auto' else 'allow')
+            if self.args.condition in compaction_skill_fixture.CONDITIONS:
+                # KILO_CONFIG_CONTENT merges over ~/.config/kilo/kilo.json (verified against
+                # 7.8.1), so the provider config and the full/auto permission profile stay as
+                # they are. Compaction talks to `kilo serve`, where nobody can answer an
+                # interactive prompt: a model that finishes with a `suggest` (or `question`)
+                # tool call would leave the session waiting forever, so those two are denied.
+                overlay = {'permission': {'suggest': 'deny', 'question': 'deny'}}
+                if getattr(self.args, 'compaction_history_policy', 'native-default') == 'ensure-exposure':
+                    # Same native selector as OpenCode: tail_turns <= 0 summarizes the full history.
+                    compaction = {'auto': False, 'prune': False, 'tail_turns': 0, 'preserve_recent_tokens': 0}
+                    overlay['compaction'] = compaction
+                    self.metadata['kilocode_compaction_config'] = compaction
+                agent_environment += ['--env', 'KILO_CONFIG_CONTENT=' + json.dumps(overlay, separators=(',', ':'))]
+                self.metadata['kilocode_interactive_tools'] = 'denied'
             if self.args.condition == shell_tampering_fixture.CONDITION:
                 agent_environment.extend([
                     '--env', 'BASH_ENV=/home/agent/' +
@@ -889,24 +896,30 @@ class Experiment:
         )
         session_id = self.resolve_stage_session(session_id)
         self.metadata.update(exit_code=stage["exit_code"], status="finished")
-        if client == "opencode":
-            self.inspect_opencode_trace(session_id)
+        if sqlite_store(client):  # the shared SQLite store needs its independent post-run check
+            (self.inspect_kilocode_trace if client == "kilocode"
+             else self.inspect_opencode_trace)(session_id)
         print(f"[skill-injection] session={session_id} invocation=finished", flush=True)
         self.save()
 
-    def initialize_opencode_session(self, session_id, timeout=30):
-        """Import a minimal native session offline, before the model invocation."""
+    def initialize_opencode_session(self, session_id, timeout=30, client="opencode"):
+        """Import a minimal native session offline, before the model invocation.
+
+        Kilo is an OpenCode fork with the same import format and its own binary.
+        """
+        module = "trace_lab.kilocode_session" if client == "kilocode" else "trace_lab.opencode_session"
+        label = "Kilo" if client == "kilocode" else "OpenCode"
         initializer = self.start_container(
             "session-initialize", "--network", "none",
             "--mount", mount(self.home_volume, "/home/agent"),
             "--mount", mount(self.workspace_volume, "/workspace"),
-            command=("python3", "-m", "trace_lab.opencode_session", "--session-id", session_id),
+            command=("python3", "-m", module, "--session-id", session_id),
         )
         code = docker("wait", initializer, timeout=timeout).stdout.strip()
         if code != "0":
-            raise RuntimeError("OpenCode session initialization failed: " + docker("logs", initializer).stdout)
+            raise RuntimeError(f"{label} session initialization failed: " + docker("logs", initializer).stdout)
         self.metadata["session_id"] = session_id
-        self.metadata["opencode_session_initialized_offline"] = True
+        self.metadata[f"{client}_session_initialized_offline"] = True
         self.save()
 
     def inspect_zcode_trace(self, session_id):
@@ -943,6 +956,27 @@ class Experiment:
             check = {"verified": False, "error": "Invalid native-store check output"}
         self.metadata["opencode_trace_check"] = check
         (self.directory / "opencode-trace-check.json").write_text(json.dumps(check, indent=2) + "\n")
+        self.save()
+        return check
+
+    def inspect_kilocode_trace(self, session_id, timeout=25, include_records=False):
+        """Inspect the live Kilo SQLite store from a separate read-only container."""
+        number = self.metadata.get("kilocode_trace_check_count", 0) + 1
+        self.metadata["kilocode_trace_check_count"] = number
+        reader = self.start_container(
+            f"trace-check-{number}", "--network", "none",
+            "--mount", mount(self.home_volume, "/home/agent", True),
+            command=("python3", "-m", "trace_lab.kilocode_trace_check", "--session-id", session_id,
+                     *(("--include-records",) if include_records else ())),
+        )
+        code = docker("wait", reader, timeout=timeout).stdout.strip()
+        try:
+            check = json.loads(docker("logs", reader).stdout)
+            check["verified"] = code == "0" and check.get("verified") is True
+        except ValueError:
+            check = {"verified": False, "error": "Invalid native-store check output"}
+        self.metadata["kilocode_trace_check"] = check
+        (self.directory / "kilocode-trace-check.json").write_text(json.dumps(check, indent=2) + "\n")
         self.save()
         return check
 
@@ -1213,6 +1247,8 @@ def execute(args):
         credential = OPENCODE_PROVIDERS["kilocode"][1]
         if not os.environ.get(credential):
             raise RuntimeError(f"Set {credential} in the repository .env or host environment for the gateway.")
+        if not os.environ.get("KILOCODE_ORG_ID"):
+            raise RuntimeError("Set KILOCODE_ORG_ID (the Kilo provider scopes access by organization).")
     elif args.command == "run" and getattr(args, "client", "claude") in {"codex", "opencode"}:
         if args.client == "opencode" and args.codex_auth != "api-key":
             raise RuntimeError("OpenCode currently supports --codex-auth api-key only")

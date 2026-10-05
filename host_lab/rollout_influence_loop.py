@@ -9,8 +9,10 @@ import sys
 import textwrap
 
 from host_lab import anonymization_loop as base
-from host_lab.opencode_peer_fixture import database_bytes, native_session_id
+from host_lab.opencode_peer_fixture import (KILO_VERSION, OPENCODE_VERSION, database_bytes,
+                                            native_session_id)
 from trace_lab.cli import nonnegative_float, nonnegative_int
+from trace_lab.native import SQLITE_STORES
 from trace_lab.rollout_influence_fixture import CONDITION, REFERENCE_ROOT
 
 
@@ -193,10 +195,8 @@ def peer_trace_path(client, session_id):
         return f"home/.cursor/projects/-workspace/agent-transcripts/{session_id}/{session_id}.jsonl"
     if client == "gemini":
         return f"home/.gemini/tmp/workspace/chats/session-2026-01-01T12-00-{session_id[:8]}.jsonl"
-    if client == "opencode":
-        return "home/.local/share/opencode/opencode.db"
-    if client == "kilocode":
-        return "home/.local/share/kilo/kilo.db"
+    if client in SQLITE_STORES:
+        return "home/" + SQLITE_STORES[client]["db"]
     raise ValueError(f"Unsupported peer client: {client}")
 
 
@@ -277,7 +277,7 @@ def peer_files(client, seed=0):
     case_assignments = dict(zip(("agent-1", "agent-2", "agent-3", "agent-4"), case_variants))
     case_assignments["agent-5"] = case_assignments["agent-1"]
     for (label, session_id, state, score), variant in zip(PEERS, variants):
-        if client == "opencode":
+        if client in SQLITE_STORES:
             session_id = native_session_id(session_id)
         root = f"{REFERENCE_ROOT}/{label}"
         case_variant = case_assignments[label]
@@ -293,9 +293,10 @@ def peer_files(client, seed=0):
         note_name, note_text = WORKSPACE_NOTES[variant]
         files[f"{root}/workspace/{note_name}"] = note_text.encode()
         trace = f"{root}/{peer_trace_path(client, session_id)}"
-        if client == "opencode":
+        if client in SQLITE_STORES:
             if state != "absent":
-                files[trace] = database_bytes(session_id, state, case_text, identities)
+                version = KILO_VERSION if client == "kilocode" else OPENCODE_VERSION
+                files[trace] = database_bytes(session_id, state, case_text, identities, version)
         else:
             records = peer_trace_records(client, session_id, case_text)
             if state == "partial":
@@ -347,7 +348,7 @@ def build_setting(client="codex", seed=0):
             "peer_environments_read_only": True,
             "peer_workspace_variation_seed": seed,
             "document_grading_version": "current-case-contributions-v1",
-            "opencode_storage_grading_version": "wal-aware-session-rows-v1" if client == "opencode" else None,
+            "opencode_storage_grading_version": "wal-aware-session-rows-v1" if client in SQLITE_STORES else None,
         },
         "result_fields": fields,
     }

@@ -20,6 +20,10 @@ def verify_auto(metadata, stream, argv):
     if client == 'opencode':
         return (argv[:3] == ['opencode', '--pure', 'run'] and '--auto' in argv
                 and metadata.get('opencode_permissions') == 'native-defaults')
+    if client == 'kilocode':
+        # --auto on the turn, and no blanket allow override in the config.
+        return (argv[:2] == ['kilo', 'run'] and '--auto' in argv
+                and metadata.get('kilocode_permissions') == 'native-defaults')
     if client == 'zcode':
         return argv[0] == 'zcode' and option('--mode', 'edit')
     if client == 'grok':

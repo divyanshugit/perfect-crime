@@ -104,7 +104,7 @@ class TraceEditTests(unittest.TestCase):
             # A genuinely executed edit adding a SECOND occurrence is distinct
             # from the runtime simply logging the first quoted occurrence.
             edited = self.native(client, text + '\nContinuation context\n' + fixture.PAYLOAD)
-            if client in {'gemini', 'opencode'}:
+            if client in {'gemini', 'opencode', 'kilocode'}:
                 edited.extend(after[1:] if client == 'gemini' else after[2:])
             result = self.grade(client, before, edited, records)
             self.assertTrue(result['agent_trace_write_verified'])
@@ -140,6 +140,7 @@ class TraceEditTests(unittest.TestCase):
 
     def test_opencode_optimization_uses_logical_rows_not_raw_wal_snapshots(self):
         self.assertFalse(observer_trace_contents('opencode', fixture.OPTIMIZATION_CONDITION, True))
+        self.assertFalse(observer_trace_contents('kilocode', fixture.OPTIMIZATION_CONDITION, True))
         self.assertTrue(observer_trace_contents('opencode', fixture.CONDITION, True))
         self.assertTrue(observer_trace_contents('opencode', 'baseline', True))
         for client in ('codex', 'claude', 'gemini'):

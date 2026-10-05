@@ -34,6 +34,7 @@ class Driver:
         self.phase = 'initialize'
         self.child = None
         self.sid = None
+        self.label = 'OpenCode'
 
     def remaining(self):
         remaining = self.deadline - time.monotonic()
@@ -121,22 +122,32 @@ class Driver:
             value = json.loads(raw) if raw else None
             emit('native_http_response', phase=self.phase, path=path, status=response.status, value=value)
             if response.status >= 400:
-                raise RuntimeError('OpenCode native endpoint failed: ' + str(value))
+                raise RuntimeError(self.label + ' native endpoint failed: ' + str(value))
             return value
         finally:
             connection.close()
 
     def opencode(self):
-        child = self.started(['opencode', '--pure', '--print-logs', '--log-level', 'DEBUG', 'serve', '--hostname', '127.0.0.1', '--port', '4096'],
+        return self.serve('opencode')
+
+    def kilocode(self):
+        # Kilo (an OpenCode fork) exposes the same POST /session/{id}/summarize.
+        # Its newer POST /api/session/{id}/compact is not used: the legacy route
+        # returns the finished boolean and matches OpenCode's persisted shape.
+        return self.serve('kilo')
+
+    def serve(self, binary):
+        self.label = 'Kilo' if binary == 'kilo' else 'OpenCode'
+        child = self.started([binary, '--pure', '--print-logs', '--log-level', 'DEBUG', 'serve', '--hostname', '127.0.0.1', '--port', '4096'],
                              stdout=sys.stderr, stderr=sys.stderr)
         while True:
             self.remaining()
             if child.poll() is not None:
-                raise RuntimeError('OpenCode server exited during startup')
+                raise RuntimeError(self.label + ' server exited during startup')
             try:
                 health = self.http('GET', '/global/health')
                 if health.get('healthy') is not True:
-                    raise RuntimeError('OpenCode server is not healthy')
+                    raise RuntimeError(self.label + ' server is not healthy')
                 break
             except (ConnectionRefusedError, ConnectionResetError, TimeoutError):
                 time.sleep(0.1)
@@ -144,7 +155,7 @@ class Driver:
         if self.spec.get('history_policy') == 'ensure-exposure':
             config = self.http('GET', '/config')
             if config.get('compaction', {}).get('tail_turns') != 0:
-                raise RuntimeError('OpenCode native full-history compaction was not configured')
+                raise RuntimeError(self.label + ' native full-history compaction was not configured')
         self.sid = session['id']
         emit('session_started', thread_id=self.sid)
         model = {'providerID': 'trace_lab', 'modelID': self.spec['model']}
@@ -155,12 +166,12 @@ class Driver:
             if phase == 'compaction':
                 result = self.http('POST', '/session/' + self.sid + '/summarize', dict(model, auto=False))
                 if result is not True:
-                    raise RuntimeError('OpenCode native summarize did not complete')
+                    raise RuntimeError(self.label + ' native summarize did not complete')
             else:
                 result = self.http('POST', '/session/' + self.sid + '/message',
                                    {'model': model, 'parts': [{'type': 'text', 'text': prompt}]})
                 if not result or result.get('info', {}).get('error'):
-                    raise RuntimeError('OpenCode message failed: ' + str(result))
+                    raise RuntimeError(self.label + ' message failed: ' + str(result))
             self.http('GET', '/session/' + self.sid + '/message')
             self.finish_phase()
         child.terminate()

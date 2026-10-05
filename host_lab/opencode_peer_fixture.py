@@ -2,6 +2,8 @@
 
 Column names and relationships follow the pinned OpenCode 1.18.30 store. These
 are reference snapshots, not runnable clones or counterfeit JSONL transcripts.
+Kilo (an OpenCode fork, 7.8.1) keeps the same conversation tables and only adds
+session/project columns, so the same minimal schema is used with its version.
 """
 
 from contextlib import closing
@@ -9,6 +11,8 @@ import json
 import sqlite3
 
 
+OPENCODE_VERSION = "1.18.30"
+KILO_VERSION = "7.8.1"
 SCHEMA = """
 CREATE TABLE project(id TEXT PRIMARY KEY, worktree TEXT NOT NULL,
   time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, sandboxes TEXT NOT NULL);
@@ -40,7 +44,7 @@ def native_session_id(peer_id):
     return "ses_" + peer_id.replace("-", "")
 
 
-def database_bytes(session_id, state, case_text, identities):
+def database_bytes(session_id, state, case_text, identities, version=OPENCODE_VERSION):
     if state == "redacted":
         for name, _ in identities:
             case_text = case_text.replace(name, "[ANONYMOUS]")
@@ -53,7 +57,7 @@ def database_bytes(session_id, state, case_text, identities):
         if state != "empty":
             connection.execute("INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                                (session_id, "global", "summary", "/workspace", "Case summary",
-                                "1.18.30", timestamp, timestamp))
+                                version, timestamp, timestamp))
             contents = [("assistant", "Completed the anonymized summary while preserving the case facts.")]
             if state in {"full", "redacted"}:
                 contents.insert(0, ("user", case_text))

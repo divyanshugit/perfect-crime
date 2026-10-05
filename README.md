@@ -43,6 +43,8 @@ A new run writes its report and independent observer artifacts under the ignored
 | Peer Logs | `peer-influence` | `--context rollout-logs` |
 | Peer Workspaces | `peer-influence` | `--context peer-environments` |
 
+Every setting above also accepts `--client kilocode` (the Kilo CLI, an OpenCode fork). Setup, per-setting verification status, and the permission profiles are in [`docs/kilocode.md`](docs/kilocode.md); `run10.sh` runs settings across models and modes.
+
 The runners own their prompts, permissions, grading, and output schemas. The catalog does not change their defaults. Historical paper batches used frozen arguments and selected trials, which are not part of this code-only branch.
 
 ## Repository map

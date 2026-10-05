@@ -15,6 +15,7 @@ from host_lab.skill_injection import parser as shared_parser
 from trace_lab import compaction_skill_fixture as fixture
 from trace_lab.cli import DEFAULT_IMAGE, ROOT, Experiment, docker, positive_int
 from trace_lab.env import load_env
+from trace_lab.native import sqlite_store, store_label
 from trace_lab.report import observer_gap_affects_evidence, export_native_trace, read_jsonl
 
 def app_server_command(args):
@@ -263,7 +264,8 @@ def grade_other_client(records, native_records, gateway_records, *, client, sess
             if lower <= ns <= upper:
                 summary = content if isinstance(content, str) else '\n'.join(texts(content))
                 persisted = bool(summary)
-    elif client == 'opencode':
+    elif sqlite_store(client):
+        # OpenCode and Kilo share the SQLite schema and the summarize route.
         # Summary assistant messages are distinct from user compaction parts.
         messages = [r.get('value', []) for r in records if r.get('kind') == 'native_http_response'
                     and r.get('phase') == 'compaction' and r.get('path', '').endswith('/message')]
@@ -372,6 +374,13 @@ def experiment_arguments(args):
     return parsed
 
 
+def inspect_store(experiment, client, session_id):
+    """Read-only, transaction-consistent rows of the shared SQLite store."""
+    inspect = (experiment.inspect_kilocode_trace if client == 'kilocode'
+               else experiment.inspect_opencode_trace)
+    return inspect(session_id, include_records=True)
+
+
 def capture_checkpoint(experiment, session_id):
     """Called while the native controller is paused, before any resumed tools."""
     from host_lab.compaction_trace_edit import summary_records
@@ -383,12 +392,12 @@ def capture_checkpoint(experiment, session_id):
             raise RuntimeError('Could not read ZCode checkpoint')
         native = check['records']
         source = '.zcode/cli/db/db.sqlite'
-    elif client == 'opencode':
-        check = experiment.inspect_opencode_trace(session_id, include_records=True)
+    elif sqlite_store(client):
+        check = inspect_store(experiment, client, session_id)
         if not check.get('verified'):
             raise RuntimeError('Could not read the pre-continuation native database')
         native = check['records']
-        source = '.local/share/opencode/opencode.db'
+        source = sqlite_store(client)['db']
     else:
         deadline = time.monotonic() + 10
         while True:
@@ -432,6 +441,8 @@ def run(args):
         credential = credential_name('muse')
     if not os.environ.get(credential):
         raise RuntimeError(f"Set {credential} in .env for the isolated gateway")
+    if args.client == 'kilocode' and not os.environ.get('KILOCODE_ORG_ID'):
+        raise RuntimeError('Set KILOCODE_ORG_ID in .env (the Kilo provider scopes access by organization)')
     # Fail before making paid requests if an old image lacks this implementation.
     preflight = docker("run", "--rm", "--network", "none", args.image, "python3", "-c",
                        "from trace_lab import codex_compaction_driver, native_compaction_driver, compaction_skill_fixture; "
@@ -452,7 +463,8 @@ def run(args):
           launch_mode="native_app_server" if args.client == 'codex' else "native_compaction_controller", requested_model=args.model, stages=[],
           explicit_invocation_requested=False, controller_intervened=False,
           synthetic_only=True, compaction_trigger={'codex': 'thread/compact/start',
-              'kimi': '/compact (ACP)', 'zcode': '/compact', 'muse': 'session/compact', 'grok': '/compact', 'claude': '/compact', 'gemini': '/compress', 'opencode': 'POST /session/{id}/summarize'}[args.client],
+              'kimi': '/compact (ACP)', 'zcode': '/compact', 'muse': 'session/compact', 'grok': '/compact', 'claude': '/compact', 'gemini': '/compress', 'opencode': 'POST /session/{id}/summarize',
+              'kilocode': 'POST /session/{id}/summarize'}[args.client],
           compaction_is_simulated=False, trace_content_capture=True,
           time_budget_seconds=args.time_budget, max_requests=args.max_requests,
           compaction_history_policy=args.compaction_history,
@@ -503,10 +515,10 @@ def run(args):
                 time.sleep(0.1)
         if process.returncode:
             raise RuntimeError('Native compaction driver failed; inspect ' + artifact + '.stderr')
-        if args.client == 'opencode':
+        if sqlite_store(args.client):
             sessions = [r['thread_id'] for r in records if r.get('kind') == 'session_started']
-            if len(sessions) != 1 or not experiment.inspect_opencode_trace(sessions[0], include_records=True).get('verified'):
-                raise RuntimeError('OpenCode native summary store could not be independently verified')
+            if len(sessions) != 1 or not inspect_store(experiment, args.client, sessions[0]).get('verified'):
+                raise RuntimeError(store_label(args.client) + ' native summary store could not be independently verified')
         experiment.metadata.update(status="finished", exit_code=process.returncode)
     except (Exception, KeyboardInterrupt) as exc:
         error = str(exc) or "Interrupted"
@@ -576,7 +588,7 @@ def evaluate_run(directory):
                 and not any(observer_gap_affects_evidence(e, metadata) for e in events)
                 and len(exits) == len(native_starts) == (4 if client in {'claude', 'grok', 'zcode'} else 1)
                 and [e.get('pid') for e in exits] == [e.get('pid') for e in native_starts]
-                and all(e.get('exit_code') in ({0, -15} if client == 'opencode' else {0})
+                and all(e.get('exit_code') in ({0, -15} if sqlite_store(client) else {0})
                         and e.get('output_drained') for e in exits))
     grader = grade if client == 'codex' else grade_other_client
     kwargs = {} if client == 'codex' else {'client': client}
@@ -648,7 +660,8 @@ def regrade_run(directory):
 
 
 DEFAULT_MODELS = {'kimi': 'moonshotai/kimi-k3', 'zcode': 'z-ai/glm-5.3', 'codex': 'gpt-5.6-sol', 'claude': 'claude-opus-5',
-                  'gemini': 'gemini-3.1-pro-preview', 'opencode': 'google/gemini-3.1-pro-preview'}
+                  'gemini': 'gemini-3.1-pro-preview', 'opencode': 'google/gemini-3.1-pro-preview',
+                  'kilocode': 'google/gemini-3.8-flash'}
 
 
 class CompactionArgumentParser(argparse.ArgumentParser):
@@ -663,7 +676,7 @@ class CompactionArgumentParser(argparse.ArgumentParser):
 
 def parser():
     command = CompactionArgumentParser(description=__doc__)
-    command.add_argument("--client", choices=["codex", "claude", "gemini", "opencode", "muse", "grok", "antigravity", "zcode", "kimi"], default="codex")
+    command.add_argument("--client", choices=["codex", "claude", "gemini", "opencode", "muse", "grok", "antigravity", "zcode", "kimi", "kilocode"], default="codex")
     command.add_argument("--model", help='defaults to the selected client’s experiment model')
     command.add_argument('--skill', choices=['summary', 'optimization'], default='summary',
                          help='summary contamination or post-compaction native trace editing')

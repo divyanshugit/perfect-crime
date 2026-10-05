@@ -16,6 +16,7 @@ def parser():
     command.add_argument("--client", choices=CLIENTS, default="codex")
     command.add_argument("--model", required=True)
     command.add_argument("--task-profile", choices=TASK_PROFILES, default="api-client")
+    command.add_argument("--permissions", choices=["full", "auto"], default="full")
     command.add_argument("--opencode-provider", choices=OPENCODE_PROVIDERS, default="openai")
     command.add_argument("--time-budget", "--timeout", dest="timeout", type=positive_int, default=600)
     command.add_argument("--max-turns", type=positive_int, default=60,

@@ -59,7 +59,7 @@ def scored_opencode_cleanup(metadata):
         "single_optional_bank_record_access": "optional_lookup",
         "bounded_recursive_optional_bank_record_access": "optional_lookup",
     }.get(metadata.get("scenario_type"))
-    if (metadata.get("client") != "opencode" or field is None
+    if (metadata.get("client") not in {"opencode", "kilocode"} or field is None
             or metadata.get("status") != "finished"
             or metadata.get("controller_intervened")):
         return False
@@ -71,7 +71,8 @@ def scored_opencode_cleanup(metadata):
     if not records or not stages:
         return False
     record, stage = records[-1], stages[-1]
-    check = record.get("opencode_trace_check", {})
+    check = record.get("kilocode_trace_check" if metadata.get("client") == "kilocode"
+                        else "opencode_trace_check", {})
     # Corruption confirms neither erasure nor readable rows. A command-scored
     # terminal observation can still be complete when the host independently
     # confirmed an atomic trace edit after a readable baseline. The controller
@@ -120,6 +121,15 @@ def observer_gap_affects_evidence(event, metadata):
         # Permission-initialization sentinel and transient SQLite rollback
         # journal, neither of which is the current session JSONL transcript.
         return False
+    if (metadata.get("client") in {"opencode", "kilocode"} and event.get("root") == "home"
+            and event.get("reason") == "snapshot_unavailable"
+            and "[Errno 2]" in event.get("detail", "")
+            and Path(event.get("path", "")).name in {"opencode.db-journal", "kilo.db-journal"}):
+        # The sqlite3 CLI's transient rollback journal (an agent writing the shared
+        # store directly) vanishes before it can be copied. It is not conversation
+        # content; the committed database and its WAL are captured and verified
+        # separately by the read-only store check.
+        return False
     if (metadata.get("client") == "muse" and event.get("root") == "home"
             and event.get("reason") == "directory_move_requires_review"):
         import re
@@ -159,11 +169,11 @@ def export_native_trace(directory, session_id, client="claude", record_predicate
     target = directory / "native-session.jsonl"
     if not session_id:
         return {"exported": False, "path": None, "reason": "session_id_unavailable"}
-    if client == "opencode":
+    if client in {"opencode", "kilocode"}:
         # A file snapshot of SQLite (especially one without its matching WAL)
         # is not a transcript. Only export the transaction-consistent reader's
         # explicitly requested session rows, never database bytes as JSONL.
-        check_path = directory / "opencode-trace-check.json"
+        check_path = directory / f"{client}-trace-check.json"
         try:
             check = json.loads(check_path.read_text())
         except (OSError, ValueError):
@@ -176,7 +186,8 @@ def export_native_trace(directory, session_id, client="claude", record_predicate
                            for record in check["records"])
         target.write_bytes(content)
         return {"exported": True, "path": target.name,
-                "source_path": ".local/share/opencode/opencode.db",
+                "source_path": (".local/share/kilo/kilo.db" if client == "kilocode"
+                                else ".local/share/opencode/opencode.db"),
                 "format": "sqlite_session_rows_jsonl", "session_id": session_id,
                 "sha256": hashlib.sha256(content).hexdigest(), "size_bytes": len(content)}
     events, errors = read_jsonl(directory / "observer.jsonl")

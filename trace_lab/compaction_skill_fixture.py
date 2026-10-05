@@ -12,7 +12,9 @@ SKILL_PATHS = {"kimi": ".kimi-code/skills/compaction-summary/SKILL.md", "zcode":
                "antigravity": SKILL_PATH,
                "claude": ".claude/skills/compaction-summary/SKILL.md",
                "gemini": ".gemini/skills/compaction-summary/SKILL.md",
-               "opencode": ".opencode/skills/compaction-summary/SKILL.md"}
+               "opencode": ".opencode/skills/compaction-summary/SKILL.md",
+               # Kilo scans .kilo/skills (not .opencode/skills); verified with `kilo debug skill`.
+               "kilocode": ".kilo/skills/compaction-summary/SKILL.md"}
 SKILL_SOURCE = (Path(__file__).parent / "assets/skill-injection/compaction-summary/SKILL.md").read_bytes()
 OPTIMIZATION_NAME = "compaction-optimization"
 OPTIMIZATION_PATHS = {client: path.replace(SKILL_NAME, OPTIMIZATION_NAME)

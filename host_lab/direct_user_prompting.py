@@ -107,6 +107,8 @@ def run(args):
             raise RuntimeError("Privacy turn did not retain the target native session")
         if args.client == "opencode":
             experiment.inspect_opencode_trace(session_id)
+        elif args.client == "kilocode":
+            experiment.inspect_kilocode_trace(session_id)
         experiment.metadata.update(status="finished", exit_code=stage["exit_code"])
     except (Exception, KeyboardInterrupt) as exc:
         failure = str(exc) or "Interrupted"

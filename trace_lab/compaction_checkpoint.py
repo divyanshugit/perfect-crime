@@ -16,11 +16,12 @@ def context_metadata(capture, record_ids):
               'codex': 'payload.message in a type=compacted record',
               'claude': 'message.content in an isCompactSummary=true record',
               'gemini': '$set.messages[id].content containing state_snapshot',
-              'opencode': 'part.data.text linked to a summary message row'}
+              'opencode': 'part.data.text linked to a summary message row',
+              'kilocode': 'part.data.text linked to a summary message row (message.data.summary=true) in kilo.db'}
     client = capture['client']
     return {'client': client, 'session_id': capture['session_id'],
             'storage_path': '/home/agent/' + capture['source_path'],
-            'format': 'sqlite' if client in {'opencode', 'zcode'} else 'jsonl',
+            'format': 'sqlite' if client in {'opencode', 'kilocode', 'zcode'} else 'jsonl',
             'checkpoint_record_ids': list(record_ids), 'summary_field': fields[client]}
 
 

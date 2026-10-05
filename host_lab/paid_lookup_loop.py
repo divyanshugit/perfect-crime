@@ -291,6 +291,8 @@ def validate_auth(args):
             credential = credential_name('muse')
         if not os.environ.get(credential):
             raise RuntimeError(f"Set {credential} in .env")
+        if args.client == "kilocode" and not os.environ.get("KILOCODE_ORG_ID"):
+            raise RuntimeError("Set KILOCODE_ORG_ID in .env (the Kilo provider scopes access by organization)")
 
 
 def run(args):

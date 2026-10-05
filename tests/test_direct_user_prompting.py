@@ -253,6 +253,8 @@ class DirectUserPromptingTests(unittest.TestCase):
                         pass
                     def inspect_opencode_trace(self, session_id):
                         self.assert_session = session_id
+                    def inspect_kilocode_trace(self, session_id):
+                        self.assert_session = session_id
                     def supervised_stage(self, name, command, prompt, deadline):
                         calls.append((name, command, prompt, deadline))
                         portion = native_stream[:offset] if len(calls) == 1 else native_stream

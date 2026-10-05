@@ -20,10 +20,29 @@ PROVIDERS = {
     "openai": ("api.openai.com", "OPENAI_API_KEY"),
     "deepseek": ("api.deepseek.com", "DEEPSEEK_API_KEY"),
     "openrouter": ("openrouter.ai", "OPENROUTER_API_KEY"),
-    # smoke: confirm the Kilo Code provider host and path prefix against the real
-    # binary before any trial (docs/kilocode.md, "Open validation items").
-    "kilocode": ("kilocode.ai", "KILOCODE_API_KEY"),
+    # Confirmed live: the Kilo Code gateway serves OpenAI Chat Completions at
+    # api.kilo.ai/api/gateway/chat/completions, using the org's BYOK provider
+    # credentials (X-KiloCode-OrganizationId selects the organization).
+    "kilocode": ("api.kilo.ai", "KILOCODE_API_KEY"),
 }
+
+
+KILO_ORG_HEADER = "X-KiloCode-OrganizationId"
+
+
+def resolve_org(provider, env=None):
+    """Return (org_id, org_header) for a provider that scopes access by org.
+
+    The Kilo provider requires an organization id alongside the key, sent in the
+    confirmed `X-KiloCode-OrganizationId` header. The id comes from KILOCODE_ORG_ID.
+    """
+    env = os.environ if env is None else env
+    if provider != "kilocode":
+        return None, KILO_ORG_HEADER
+    org_id = env.get("KILOCODE_ORG_ID")
+    if not org_id:
+        raise ValueError("KILOCODE_ORG_ID must be provided to the gateway for the Kilo provider")
+    return org_id, KILO_ORG_HEADER
 
 
 def upstream_destination(provider, path, native_client=None):
@@ -33,11 +52,12 @@ def upstream_destination(provider, path, native_client=None):
             raise ValueError("Provider supports the Responses endpoint only")
         path = path.removeprefix("/v1") if provider == "deepseek" else "/api" + path
     elif provider == "kilocode":
-        # The Kilo Code hosted provider is OpenAI Chat Completions compatible.
+        # The Kilo Code gateway is OpenAI Chat Completions compatible. The native
+        # client posts to /v1/chat/completions (its provider baseURL ends in /v1);
+        # the real gateway path drops /v1 and lives under /api/gateway.
         if urlsplit(path).path != "/v1/chat/completions":
             raise ValueError("Kilo provider supports the Chat Completions endpoint only")
-        # smoke: confirm the upstream path prefix (Kilo proxies via /api/...).
-        path = "/api/openrouter" + path
+        path = "/api/gateway/chat/completions"
     return host, path
 
 
@@ -200,6 +220,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         }
         if self.headers.get("OpenAI-Beta"):
             headers["OpenAI-Beta"] = self.headers["OpenAI-Beta"]
+        # The Kilo provider scopes access by organization in addition to the key.
+        org_id = getattr(self.server, "org_id", None)
+        if org_id:
+            headers[getattr(self.server, "org_header", "X-KiloCode-OrganizationId")] = org_id
         sent_headers = False
         upstream = http.client.HTTPSConnection(host, timeout=60)
         try:
@@ -271,6 +295,10 @@ def main():
         os.chmod("/relay/api.sock", 0o666)
         server.api_key = api_key
         server.provider = args.provider
+        try:
+            server.org_id, server.org_header = resolve_org(args.provider)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
         server.native_client = args.native_client
         server.muse_tool_evidence = args.muse_tool_evidence
         server.log_request_status = args.log_request_status
