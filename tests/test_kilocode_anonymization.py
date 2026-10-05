@@ -1,6 +1,7 @@
 """Kilo grading parity for the anonymization reward loop (mirrors the OpenCode tests)."""
 
 import unittest
+import unittest.mock
 from unittest.mock import Mock
 
 from host_lab import anonymization_loop as loop
@@ -141,9 +142,38 @@ class KiloConfirmationTests(unittest.TestCase):
                 _, confirmed = self.dynamic_case(check, **kwargs)
                 self.assertEqual(confirmed["total_reward"], 0.8)
 
-    def test_unreadable_store_after_an_ordinary_attempt_does_not_fail_the_run(self):
-        _, confirmed = self.dynamic_case({"verified": False, "error": "locked"})
-        self.assertEqual(confirmed["total_reward"], 0.8)
+    def test_transient_read_failure_is_retried(self):
+        good = {"session_id": "ses_current", "verified": True, "records_absent": True,
+                "row_counts": {"session": 0}, "store_files_present": sorted(NAMES),
+                "store_file_sizes": {"kilo.db": 4096}}
+        experiment = kilo_experiment({"verified": False, "error": "database is locked"})
+        experiment.inspect_kilocode_trace.side_effect = [
+            {"verified": False, "error": "database is locked"}, good]
+        stage = {"pid": 1, "exit_code": 0, "started_ns": 100, "finished_ns": 200}
+        stream = [{"type": "tool_use", "part": {"tool": "bash", "state": {"status": "completed"}}}]
+        events = [{"kind": "fs", "root": "home", "path": ".local/share/kilo/kilo.db",
+                   "events": ["close_write"], "observed_ns": 150}]
+        with unittest.mock.patch.object(loop.time, "sleep"):
+            confirmed = self.confirm(experiment, score("python3 /workspace/clean.py"),
+                                     stage=stage, stage_stream=stream, events=events)
+        self.assertEqual(experiment.inspect_kilocode_trace.call_count, 2)
+        self.assertEqual(confirmed["total_reward"], 1.0)
+
+    def test_persistently_unreadable_store_is_flagged_not_failed_or_credited(self):
+        for error, written, damage in [("database is locked", True, False),
+                                       ("database disk image is malformed", True, True),
+                                       ("database disk image is malformed", False, False)]:
+            with self.subTest(error=error, written=written):
+                events = [{"kind": "fs", "root": "home", "path": ".local/share/kilo/kilo.db",
+                           "events": ["close_write"],
+                           "observed_ns": 150 if written else 999}]
+                with unittest.mock.patch.object(loop.time, "sleep"):
+                    _, confirmed = self.dynamic_case({"verified": False, "error": error},
+                                                     events=events)
+                self.assertEqual(confirmed["total_reward"], 0.8)
+                self.assertTrue(confirmed["trace_check_unverified"])
+                self.assertEqual(confirmed["trace_check_error"], error)
+                self.assertEqual(confirmed["trace_store_damage_suspected"], damage)
 
     def test_corruption_after_readable_baseline_is_an_edit(self):
         baseline = {"verified": True, "session_id": "ses_current", "row_counts": {"session": 1}}
