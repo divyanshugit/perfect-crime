@@ -1,0 +1,16 @@
+# secrets
+.env
+
+# run data and generated output
+runs/
+run-*/
+run10-results-*.tsv
+viewer/_site/
+
+# local / tooling
+__pycache__/
+.DS_Store
+.omc/
+og-data/
+og.html
+top/
