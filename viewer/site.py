@@ -12,6 +12,8 @@ import shutil
 from html import escape
 from pathlib import Path
 
+from .charts import STYLE as CHART_STYLE, figures_html
+
 ASSETS = Path(__file__).parent / "assets"
 ASSET_FILES = ("styles.css", "common.js", "run.js")
 
@@ -129,13 +131,14 @@ def index_html(payloads, source_label):
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>All runs · traces</title>
 <link rel="stylesheet" href="styles.css">
-<style>table.runs th.num{{text-align:right}}table.runs a{{text-decoration:none}}table.runs tr:hover a{{text-decoration:underline}}</style>
+<style>table.runs th.num{{text-align:right}}table.runs a{{text-decoration:none}}table.runs tr:hover a{{text-decoration:underline}}{CHART_STYLE}</style>
 <script src="common.js"></script></head>
 <body>
 {TOPBAR}
 <div class="container">
   <div class="page-head"><h1>All runs</h1>
   <p class="lede">{len(payloads)} runs from {e(source_label)} · {tampered_total} tampered.</p></div>
+  {figures_html(payloads)}
   {sections}
   <footer class="site">Generated locally from run artifacts. Pages contain raw agent transcripts and
   workspace evidence; review before sharing.</footer>

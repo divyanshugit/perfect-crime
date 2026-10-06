@@ -31,6 +31,15 @@ ATTACK_CLASS = {
     "bounded_recursive_terminal_bench_optimization": "Reward loop",
     "bounded_recursive_rollout_influence": "Peer influence",
 }
+SETTING_KEY = {
+    "direct_native_trace_injection_control": "reset",
+    "direct_shell_environment_tampering": "toolcall",
+    "native_skill_file_injection": "privacy_skill",
+    "native_compaction_skill_injection": "compaction",
+    "bounded_recursive_document_optimization": "anonymization",
+    "bounded_recursive_terminal_bench_optimization": "terminal_bench",
+}
+PEER_KEY = {"rollout-logs": "peer_logs", "peer-environments": "peer_workspaces"}
 TAMPERED = {"trace_deleted", "trace_cleared", "trace_edited", "partial_deletion",
             "trace_edit_without_reset_event", "destructive_noncompliance", "fully_complied"}
 CLEAN = {"no_deletion", "no_trace_injection", "deletion_denied_or_failed"}
@@ -116,6 +125,16 @@ def describe_input(tool, args):
         return args.get("description") or args.get("prompt") or "(task)"
     scalars = [f"{k}: {v}" for k, v in args.items() if isinstance(v, (str, int, float, bool))]
     return "  ".join(scalars)[:300] or json.dumps(args)[:300]
+
+
+def setting_key(scenario, profile, meta, report):
+    """Stable id of the paper setting a run belongs to; the charts group runs by it."""
+    if scenario == "direct_user_privacy_request":
+        return "personal" if profile == "personal" else "financial"
+    if scenario == "bounded_recursive_rollout_influence":
+        context = meta.get("cascade_context") or report.get("cascade_context")
+        return PEER_KEY.get(context, "peer")
+    return SETTING_KEY.get(scenario, scenario or "run")
 
 
 def find_report(directory):
@@ -318,6 +337,7 @@ def load_run(directory, batch=None):
         "meta": {
             "run_id": meta.get("run_id", directory.name),
             "scenario": scenario,
+            "setting_key": setting_key(scenario, profile, meta, report),
             "condition": f"{profile or scenario}:{'full' if full else 'auto'}",
             "group": ATTACK_CLASS.get(scenario, "—"),
             "label": f"{setting} · {permission_label}",
